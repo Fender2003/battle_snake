@@ -9,25 +9,26 @@ from utils.pathfinding import bfs_path
 
 class AdvancedAgent(BaseAgent):
     """
-    Same core logic as the version that performed well in practice:
-    survival check -> space (flood fill) -> health-scaled food pull ->
-    head-to-head collision avoidance. Nothing fancier layered on top,
-    because the fancier version (trap lookahead / offense scoring reaching
-    into fields that can be missing) is what was causing crashes and worse
-    play.
+    Deliberately simple and stable. Decision order:
 
-    What changed here, specifically to fix crashes and reliability:
-      1. move() is wrapped so ANY unexpected exception falls back to a
-         minimal, always-safe decision instead of the process dying mid-game
-         (a crash forfeits the turn far worse than a mediocre move would).
-      2. Every board-state field is read defensively (.get with a default,
-         guarded conversions) so a missing/odd field never raises.
-      3. Food urgency is a smooth ramp instead of a hard 70/30 cutoff, so
-         behavior doesn't jump discontinuously right at those health values.
-      4. Offense scoring is back, but conservatively: it only ever adds
-         bonus to a move that has ALREADY been confirmed to have zero
-         collision risk and reasonable space -- it can never be the reason
-         a risky move gets picked.
+      1. SAFETY FILTER (hard): throw out any move that collides with a
+         snake body. This is a filter, not a score -- an unsafe move can
+         never win no matter how good its other numbers look.
+      2. Among safe moves, rank by floodfill space (don't get trapped).
+      3. Add a real MOMENTUM term -- a bonus for continuing your current
+         heading. This is what was missing before: without it, two moves
+         with very close (but not exactly equal) scores can trade the lead
+         turn to turn as the board shifts slightly, which looks like
+         random zigzagging (e.g. "up" then "down" then "up"). Momentum
+         damps that out by making "keep going the way you were going"
+         worth something concrete, not just a tiebreaker for exact ties.
+      4. Food is only weighted meaningfully when health is actually low --
+         otherwise it's a small nudge, not a competing priority.
+
+    No offense/hunting, no multi-ply trap lookahead. Those add real value
+    eventually, but they're exactly the kind of thing that turns a stable
+    snake into an erratic one if a heuristic is even slightly off, so
+    they're left out until this simpler core is confirmed solid.
     """
 
     name = "advanced"
@@ -35,16 +36,12 @@ class AdvancedAgent(BaseAgent):
     color = "#00ff00"
     author = "Skadoosh"
 
-    W_SURVIVAL = 100.0
     W_SPACE = 50.0
     W_FOOD_BASE = 8.0
-    W_COLLISION = 55.0
-    W_OFFENSE = 10.0
+    W_MOMENTUM = 12.0  # real scoring term, not just a tiebreak
 
     LOW_HEALTH_THRESHOLD = 70
     STARVING_THRESHOLD = 30
-    HUNT_RANGE = 4
-    MIN_SAFE_SPACE_FOR_OFFENSE = 0.15  # only hunt if the move is roomy too
 
     # ------------------------------------------------------------------ #
     # Entry point -- never allowed to raise
@@ -56,16 +53,10 @@ class AdvancedAgent(BaseAgent):
             if result:
                 return result
         except Exception:
-            pass  # fall through to the safe fallback below
-
+            pass
         return self._safe_fallback(game_state, you)
 
     def _safe_fallback(self, game_state: dict[str, Any], you: dict[str, Any]) -> str:
-        """
-        Minimal, defensive-only decision used if the main logic throws for
-        any reason. Just avoids obviously fatal squares; no scoring, no
-        fancy structures, so it can't itself fail the same way.
-        """
         try:
             legal = legal_moves(game_state, you) or ["up", "down", "left", "right"]
             head = parse_point(you.get("head", {"x": 0, "y": 0}))
@@ -73,10 +64,9 @@ class AdvancedAgent(BaseAgent):
             width = board.get("width", 11)
             height = board.get("height", 11)
 
-            blocked: set[tuple[int, int]] = set()
+            blocked = set()
             for snake in board.get("snakes", []) or []:
-                body = snake.get("body") or []
-                for p in body:
+                for p in snake.get("body") or []:
                     try:
                         blocked.add(parse_point(p))
                     except Exception:
@@ -114,35 +104,40 @@ class AdvancedAgent(BaseAgent):
             return None
 
         board = game_state.get("board") or {}
-        width = board.get("width")
-        height = board.get("height")
+        width, height = board.get("width"), board.get("height")
         if not width or not height:
             return None
-
         if not you.get("head"):
             return None
-        head = parse_point(you["head"])
 
-        your_len = max(1, int(you.get("length") or 1))
+        head = parse_point(you["head"])
         your_health = int(you.get("health") if you.get("health") is not None else 100)
         foods = [parse_point(f) for f in (board.get("food") or [])]
-
         blocked = self._blocked_cells(game_state, you)
-        enemies = self._enemy_info(game_state, you)
+        current_dir = self._current_heading(you)
         food_urgency = self._food_urgency(your_health)
 
-        move_scores: dict[str, float] = {}
-
+        # --- Step 1: hard safety filter ---
+        safe_moves = []
         for m in legal:
             try:
                 nxt = next_position(head, m)
             except Exception:
                 continue
-
             if nxt in blocked:
-                move_scores[m] = -1e6
                 continue
+            if not (0 <= nxt[0] < width and 0 <= nxt[1] < height):
+                continue
+            safe_moves.append((m, nxt))
 
+        if not safe_moves:
+            # nothing is safe -- every option dies; just return any legal
+            # move rather than crash, the outcome is the same either way.
+            return legal[0]
+
+        # --- Step 2/3/4: score only the survivors ---
+        move_scores: dict[str, float] = {}
+        for m, nxt in safe_moves:
             sim_blocked = set(blocked)
             sim_blocked.discard(nxt)
 
@@ -164,51 +159,38 @@ class AdvancedAgent(BaseAgent):
                 except Exception:
                     food_score = 0.0
 
-            collision_risk = self._head_to_head_risk(nxt, enemies, your_len)
-
-            offense_score = 0.0
-            if collision_risk == 0.0 and space_score >= self.MIN_SAFE_SPACE_FOR_OFFENSE:
-                offense_score = self._offense_score(nxt, enemies, your_len)
+            momentum_bonus = 1.0 if (current_dir and m == current_dir) else 0.0
 
             move_scores[m] = (
-                self.W_SURVIVAL
-                + (self.W_SPACE * space_score)
+                (self.W_SPACE * space_score)
                 + (self.W_FOOD_BASE * food_urgency * food_score)
-                + (self.W_OFFENSE * offense_score)
-                - (self.W_COLLISION * collision_risk)
+                + (self.W_MOMENTUM * momentum_bonus)
             )
-
-        if not move_scores:
-            return None
 
         return self._pick_best(move_scores, you)
 
-    def _pick_best(self, move_scores: dict[str, float], you: dict[str, Any]) -> str:
-        """
-        Break ties deterministically and sensibly instead of relying on
-        dict/list ordering (which silently favors whatever came first --
-        e.g. "up" -- and can look like a random direction change when
-        several moves score the same).
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
 
-        Preference order for ties: continue in the current heading first
-        (less erratic movement), then fall back to a deterministic choice.
-        """
-        best_score = max(move_scores.values())
-        tied = [m for m, s in move_scores.items() if s == best_score]
-
-        if len(tied) == 1:
-            return tied[0]
-
-        current_dir = self._current_heading(you)
-        if current_dir and current_dir in tied:
-            return current_dir
-
-        # Still tied with no heading preference available: pick
-        # deterministically (sorted) rather than dict-insertion order.
-        return sorted(tied)[0]
+    def _blocked_cells(self, game_state: dict[str, Any], you: dict[str, Any]) -> set[tuple[int, int]]:
+        blocked: set[tuple[int, int]] = set()
+        for snake in (game_state.get("board", {}).get("snakes") or []):
+            raw_body = snake.get("body") or []
+            if not raw_body:
+                continue
+            try:
+                body = [parse_point(p) for p in raw_body]
+            except Exception:
+                continue
+            # tail assumed to vacate next turn (simple and reliable)
+            if len(body) > 1:
+                blocked.update(body[:-1])
+            else:
+                blocked.update(body)
+        return blocked
 
     def _current_heading(self, you: dict[str, Any]) -> Optional[str]:
-        """Infer current direction of travel from the last two body segments."""
         body = you.get("body") or []
         if len(body) < 2:
             return None
@@ -229,61 +211,7 @@ class AdvancedAgent(BaseAgent):
             return "left"
         return None
 
-    # ------------------------------------------------------------------ #
-    # Board state helpers (defensive: never assume a field is present)
-    # ------------------------------------------------------------------ #
-
-    def _blocked_cells(self, game_state: dict[str, Any], you: dict[str, Any]) -> set[tuple[int, int]]:
-        blocked: set[tuple[int, int]] = set()
-        you_id = you.get("id")
-
-        for snake in (game_state.get("board", {}).get("snakes") or []):
-            raw_body = snake.get("body") or []
-            if not raw_body:
-                continue
-
-            try:
-                body = [parse_point(p) for p in raw_body]
-            except Exception:
-                continue
-
-            # Assume the tail vacates next turn (simpler and, per testing,
-            # more reliable than trying to detect "just ate" from health).
-            if len(body) > 1:
-                blocked.update(body[:-1])
-            else:
-                blocked.update(body)
-
-        return blocked
-
-    def _enemy_info(self, game_state: dict[str, Any], you: dict[str, Any]) -> list[dict[str, Any]]:
-        out: list[dict[str, Any]] = []
-        you_id = you.get("id")
-
-        for snake in (game_state.get("board", {}).get("snakes") or []):
-            if snake.get("id") == you_id:
-                continue
-            if not snake.get("body") or not snake.get("head"):
-                continue
-            try:
-                out.append(
-                    {
-                        "head": parse_point(snake["head"]),
-                        "length": int(snake.get("length") or 0),
-                    }
-                )
-            except Exception:
-                continue
-
-        return out
-
-    # ------------------------------------------------------------------ #
-    # Scoring components
-    # ------------------------------------------------------------------ #
-
     def _food_urgency(self, health: int) -> float:
-        """Smooth ramp instead of a hard cutoff, so behavior near the
-        threshold values doesn't jump discontinuously."""
         if health >= self.LOW_HEALTH_THRESHOLD:
             return 0.3
         if health <= self.STARVING_THRESHOLD:
@@ -292,39 +220,12 @@ class AdvancedAgent(BaseAgent):
         progress = (self.LOW_HEALTH_THRESHOLD - health) / span
         return 0.3 + progress * (2.0 - 0.3)
 
-    def _head_to_head_risk(
-        self,
-        target: tuple[int, int],
-        enemies: list[dict[str, Any]],
-        your_length: int,
-    ) -> float:
-        risk = 0.0
-        for enemy in enemies:
-            ehead, elen = enemy["head"], enemy["length"]
-            dist = abs(ehead[0] - target[0]) + abs(ehead[1] - target[1])
-            if dist == 1 and elen >= your_length:
-                risk = max(risk, 1.0)
-            elif dist == 2 and elen >= your_length:
-                risk = max(risk, 0.4)
-        return risk
-
-    def _offense_score(
-        self,
-        target: tuple[int, int],
-        enemies: list[dict[str, Any]],
-        your_length: int,
-    ) -> float:
-        """Only ever adds a bonus -- called from a context where the move
-        is already confirmed collision-free and has decent space, so this
-        can never be the reason a dangerous move wins."""
-        best = 0.0
-        for enemy in enemies:
-            ehead, elen = enemy["head"], enemy["length"]
-            if elen >= your_length:
-                continue
-            dist = abs(ehead[0] - target[0]) + abs(ehead[1] - target[1])
-            if dist == 0:
-                continue
-            if dist <= self.HUNT_RANGE:
-                best = max(best, 1.0 / dist)
-        return best
+    def _pick_best(self, move_scores: dict[str, float], you: dict[str, Any]) -> str:
+        best_score = max(move_scores.values())
+        tied = [m for m, s in move_scores.items() if s == best_score]
+        if len(tied) == 1:
+            return tied[0]
+        current_dir = self._current_heading(you)
+        if current_dir and current_dir in tied:
+            return current_dir
+        return sorted(tied)[0]
