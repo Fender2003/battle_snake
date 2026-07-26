@@ -24,6 +24,7 @@ class SnakeState:
     health: int = 100
     alive: bool = True
     death_turn: int | None = None
+    death_reason: str | None = None
 
     @property
     def head(self) -> tuple[int, int]:
@@ -70,6 +71,7 @@ class BattlesnakeBlackoutEngine:
     food: set[tuple[int, int]] = field(default_factory=set)
     food_spawn_turn: dict[tuple[int, int], int] = field(default_factory=dict)
     history: list[TurnSnapshot] = field(default_factory=list)
+    elimination_events: list[dict[str, Any]] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.rng = random.Random(self.seed)
@@ -217,27 +219,50 @@ class BattlesnakeBlackoutEngine:
                 snake.body.pop()
 
         dead: set[str] = set()
+        death_reasons: dict[str, dict[str, Any]] = {}
         for snake_id in alive_ids:
             snake = self.snakes[snake_id]
-            if snake.health <= 0 or not self._in_bounds(snake.head):
+            if not self._in_bounds(snake.head):
                 dead.add(snake_id)
+                death_reasons[snake_id] = {
+                    "reason": "wall_collision",
+                    "position": {"x": snake.head[0], "y": snake.head[1]},
+                }
+            elif snake.health <= 0:
+                dead.add(snake_id)
+                death_reasons[snake_id] = {
+                    "reason": "starvation",
+                    "position": {"x": snake.head[0], "y": snake.head[1]},
+                }
 
         position_to_heads: dict[tuple[int, int], list[str]] = {}
         for snake_id in alive_ids:
             if snake_id in dead:
                 continue
             position_to_heads.setdefault(self.snakes[snake_id].head, []).append(snake_id)
-        for contenders in position_to_heads.values():
+        for head_cell, contenders in position_to_heads.items():
             if len(contenders) < 2:
                 continue
             max_len = max(self.snakes[sid].length for sid in contenders)
             longest = [sid for sid in contenders if self.snakes[sid].length == max_len]
             if len(longest) > 1:
-                dead.update(contenders)
+                for sid in contenders:
+                    dead.add(sid)
+                    death_reasons[sid] = {
+                        "reason": "head_to_head_tie",
+                        "position": {"x": head_cell[0], "y": head_cell[1]},
+                        "contenders": contenders,
+                    }
             else:
                 for sid in contenders:
                     if sid != longest[0]:
                         dead.add(sid)
+                        death_reasons[sid] = {
+                            "reason": "head_to_head_loss",
+                            "position": {"x": head_cell[0], "y": head_cell[1]},
+                            "winner": longest[0],
+                            "contenders": contenders,
+                        }
 
         occupied_body_cells: dict[tuple[int, int], list[str]] = {}
         for snake_id in alive_ids:
@@ -247,13 +272,33 @@ class BattlesnakeBlackoutEngine:
         for snake_id in alive_ids:
             if snake_id in dead:
                 continue
-            if self.snakes[snake_id].head in occupied_body_cells:
+            head = self.snakes[snake_id].head
+            if head in occupied_body_cells:
                 dead.add(snake_id)
+                colliders = occupied_body_cells[head]
+                reason = "snake_body_collision"
+                if snake_id in colliders:
+                    reason = "own_body_collision"
+                death_reasons[snake_id] = {
+                    "reason": reason,
+                    "position": {"x": head[0], "y": head[1]},
+                    "colliders": colliders,
+                }
 
         for snake_id in dead:
             snake = self.snakes[snake_id]
             snake.alive = False
             snake.death_turn = self.turn
+            snake.death_reason = death_reasons.get(snake_id, {}).get("reason", "unknown")
+            self.elimination_events.append(
+                {
+                    "turn": self.turn,
+                    "snake_id": snake_id,
+                    "snake_name": snake.name,
+                    "reason": snake.death_reason,
+                    "details": death_reasons.get(snake_id, {}),
+                }
+            )
 
         if len(self.food) < self.min_food:
             self._spawn_food(force=True)
@@ -277,3 +322,36 @@ class BattlesnakeBlackoutEngine:
             survived_until = self.turn if snake.alive else (snake.death_turn or 0)
             rank_data.append((snake_id, survived_until))
         return sorted(rank_data, key=lambda item: item[1], reverse=True)
+
+    def export_game_data(self) -> dict[str, Any]:
+        return {
+            "game_id": self.game_id,
+            "width": self.width,
+            "height": self.height,
+            "turns_played": self.turn,
+            "winner": self.winner(),
+            "ranking": self.ranking(),
+            "snakes": [
+                {
+                    "id": snake.snake_id,
+                    "name": snake.name,
+                    "alive": snake.alive,
+                    "length": snake.length,
+                    "health": snake.health,
+                    "death_turn": snake.death_turn,
+                    "death_reason": snake.death_reason,
+                }
+                for snake in self.snakes.values()
+            ],
+            "eliminations": self.elimination_events,
+            "history": [
+                {
+                    "turn": snap.turn,
+                    "snakes": snap.snakes,
+                    "food": snap.food,
+                    "width": snap.width,
+                    "height": snap.height,
+                }
+                for snap in self.history
+            ],
+        }

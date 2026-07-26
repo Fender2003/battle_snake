@@ -13,6 +13,7 @@ Local Python 3.11+ environment for testing Battlesnake agents with a realistic B
 - Battlesnake-compatible API endpoints (`/`, `/start`, `/move`, `/end`).
 - Modular agent system (`random`, `greedy`, `advanced`).
 - Self-play benchmarking with JSON output.
+- Automatic per-game JSON logging for post-game loss analysis.
 - Matplotlib local visualization replay.
 - Docker + Render/Railway deploy config.
 
@@ -54,11 +55,13 @@ Options:
 - `--max-turns 400`
 - `--seed 123`
 - `--visualize` (replay with matplotlib)
+- `--log-dir logs/games` (default location for saved game logs)
+- `--no-log` (disable logging)
 
 ## Run Self-Play Training
 
 ```bash
-python train.py --games 2000 --output self_play_results.json
+python train.py --games 2000 --output self_play_results.json --log-dir logs/games
 ```
 
 Outputs:
@@ -66,6 +69,22 @@ Outputs:
 - win rate
 - average survival turns
 - average rank
+- loss analysis (`death_reason_counts`, `avg_death_turn_by_reason`) from logged games
+
+## Game Logs and Loss Analysis
+
+Every game can be saved as a JSON file in `logs/games/` with:
+- full turn-by-turn snapshot history
+- elimination events with reason/details
+- final snake summaries (including `death_reason` + `death_turn`)
+
+Common death reasons:
+- `wall_collision`
+- `starvation`
+- `own_body_collision`
+- `snake_body_collision`
+- `head_to_head_loss`
+- `head_to_head_tie`
 
 ## Run API Server
 
