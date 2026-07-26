@@ -256,7 +256,7 @@ class AdvancedAgent(BaseAgent):
             if not body:
                 continue
 
-            just_ate = int(snake.get("health", 0)) == 100
+            just_ate = int(snake.get("health") or 0) == 100
             is_self = snake["id"] == you["id"]
 
             if len(body) > 1 and not just_ate:
