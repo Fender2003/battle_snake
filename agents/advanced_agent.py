@@ -178,10 +178,14 @@ class AdvancedAgent(BaseAgent):
 
         board = game_state["board"]
         width, height = board["width"], board["height"]
+        if not you.get("head"):
+            return "up"
+
         head = parse_point(you["head"])
-        your_len = int(you["length"])
-        your_health = int(you.get("health", 100))
-        foods = [parse_point(f) for f in board["food"]]
+
+        your_len = int(you.get("length") or 0)
+        your_health = int(you.get("health") or 100)
+        foods = [parse_point(f) for f in board.get("food", [])]
         hazards = {parse_point(h) for h in board.get("hazards", [])}
 
         blocked = self._blocked_cells(game_state, you)
