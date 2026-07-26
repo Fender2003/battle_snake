@@ -94,7 +94,13 @@ class AdvancedAgent(BaseAgent):
                     continue
                 safe.append(m)
 
-            return safe[0] if safe else legal[0]
+            if not safe:
+                return legal[0]
+
+            current_dir = self._current_heading(you)
+            if current_dir and current_dir in safe:
+                return current_dir
+            return sorted(safe)[0]
         except Exception:
             return "up"
 
@@ -175,7 +181,53 @@ class AdvancedAgent(BaseAgent):
         if not move_scores:
             return None
 
-        return max(move_scores, key=move_scores.get)
+        return self._pick_best(move_scores, you)
+
+    def _pick_best(self, move_scores: dict[str, float], you: dict[str, Any]) -> str:
+        """
+        Break ties deterministically and sensibly instead of relying on
+        dict/list ordering (which silently favors whatever came first --
+        e.g. "up" -- and can look like a random direction change when
+        several moves score the same).
+
+        Preference order for ties: continue in the current heading first
+        (less erratic movement), then fall back to a deterministic choice.
+        """
+        best_score = max(move_scores.values())
+        tied = [m for m, s in move_scores.items() if s == best_score]
+
+        if len(tied) == 1:
+            return tied[0]
+
+        current_dir = self._current_heading(you)
+        if current_dir and current_dir in tied:
+            return current_dir
+
+        # Still tied with no heading preference available: pick
+        # deterministically (sorted) rather than dict-insertion order.
+        return sorted(tied)[0]
+
+    def _current_heading(self, you: dict[str, Any]) -> Optional[str]:
+        """Infer current direction of travel from the last two body segments."""
+        body = you.get("body") or []
+        if len(body) < 2:
+            return None
+        try:
+            head = parse_point(body[0])
+            neck = parse_point(body[1])
+        except Exception:
+            return None
+
+        dx, dy = head[0] - neck[0], head[1] - neck[1]
+        if dx == 0 and dy == 1:
+            return "up"
+        if dx == 0 and dy == -1:
+            return "down"
+        if dx == 1 and dy == 0:
+            return "right"
+        if dx == -1 and dy == 0:
+            return "left"
+        return None
 
     # ------------------------------------------------------------------ #
     # Board state helpers (defensive: never assume a field is present)
