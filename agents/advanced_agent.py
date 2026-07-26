@@ -22,6 +22,7 @@ class AdvancedAgent(BaseAgent):
         height = game_state["board"]["height"]
         head = parse_point(you["head"])
         your_len = int(you["length"])
+        your_health = int(you.get("health", 100))
         foods = [parse_point(food) for food in game_state["board"]["food"]]
 
         blocked = self._blocked_cells(game_state, you)
@@ -52,23 +53,27 @@ class AdvancedAgent(BaseAgent):
                 if path:
                     food_score = 1.0 / max(1, len(path) - 1)
 
+                    if your_health > 70:
+                        food_score *= 0.3
+                    elif your_health < 30:
+                        food_score *= 2.0
+                        
             collision_risk = self._head_to_head_risk(
                 target=nxt,
                 enemy_heads=enemy_heads,
                 your_length=your_len,
             )
 
-            a_star_bonus = 0.0
-            if foods:
-                nearest_food = min(foods, key=lambda f: abs(nxt[0] - f[0]) + abs(nxt[1] - f[1]))
-                if a_star_path(nxt, nearest_food, width, height, simulated_blocked):
-                    a_star_bonus = 0.15
+            # a_star_bonus = 0.0
+            # if foods:
+            #     nearest_food = min(foods, key=lambda f: abs(nxt[0] - f[0]) + abs(nxt[1] - f[1]))
+            #     if a_star_path(nxt, nearest_food, width, height, simulated_blocked):
+            #         a_star_bonus = 0.15
 
             move_scores[move] = (
                 (100.0 * survival_probability)
-                + (35.0 * space_score)
-                + (18.0 * food_score)
-                + a_star_bonus
+                + (50.0 * space_score)
+                + (8.0 * food_score)
                 - (55.0 * collision_risk)
             )
 
@@ -83,7 +88,11 @@ class AdvancedAgent(BaseAgent):
             if snake["id"] == you["id"] and len(body) > 1:
                 blocked.update(body[:-1])
             else:
-                blocked.update(body)
+                if len(body) > 1:
+                    blocked.update(body[:-1])
+                else:
+                    blocked.update(body)
+
         return blocked
 
     def _enemy_heads(self, game_state: dict[str, Any], you: dict[str, Any]) -> list[tuple[tuple[int, int], int]]:
@@ -111,6 +120,7 @@ class AdvancedAgent(BaseAgent):
         target: tuple[int, int],
         enemy_heads: list[tuple[tuple[int, int], int]],
         your_length: int,
+        
     ) -> float:
         risk = 0.0
         for enemy_head, enemy_len in enemy_heads:
