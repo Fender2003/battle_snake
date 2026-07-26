@@ -88,10 +88,22 @@ class AdvancedAgent(BaseAgent):
 
     def _enemy_heads(self, game_state: dict[str, Any], you: dict[str, Any]) -> list[tuple[tuple[int, int], int]]:
         out: list[tuple[tuple[int, int], int]] = []
+
         for snake in game_state["board"]["snakes"]:
-            if snake["id"] == you["id"] or not snake["body"]:
+            if snake["id"] == you["id"]:
                 continue
-            out.append((parse_point(snake["head"]), int(snake["length"])))
+
+            # Ignore dead snakes
+            if not snake.get("head") or not snake.get("body"):
+                continue
+
+            out.append(
+                (
+                    parse_point(snake["head"]),
+                    int(snake.get("length") or 0)
+                )
+            )
+
         return out
 
     def _head_to_head_risk(
