@@ -8,6 +8,7 @@ from agent import BaseAgent, VALID_MOVES, legal_moves
 
 class RandomAgent(BaseAgent):
     name = "random"
+    apiversion = "1"
     color = "#cccccc"
     author = "RandomBot"
 

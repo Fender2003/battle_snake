@@ -15,6 +15,7 @@ app = FastAPI(title="Battlesnake Blackout Local API")
 @app.get("/")
 def info() -> dict[str, str]:
     return {
+        "apiversion": AGENT.apiversion,
         "author": AGENT.author,
         "color": AGENT.color,
     }

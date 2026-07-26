@@ -13,27 +13,28 @@
       }
     ],
     "snakes": [
-      {
-        "id": "my-snake",
-        "name": "Skadoosh",
-        "health": 100,
-        "body": [
-          {
-            "x": 5,
-            "y": 5
-          },
-          {
-            "x": 5,
-            "y": 6
-          }
-        ],
-        "head": {
-          "x": 5,
-          "y": 5
-        },
-        "length": 2
-      }
-    ]
+  {
+    "id": "my-snake",
+    "name": "Skadoosh",
+    "health": 100,
+    "body": [
+      {"x":5,"y":5},
+      {"x":5,"y":6}
+    ],
+    "head": {"x":5,"y":5},
+    "length":2
+  },
+  {
+    "id":"enemy",
+    "name":"enemy",
+    "health":100,
+    "body":[
+      {"x":6,"y":5}
+    ],
+    "head":{"x":6,"y":5},
+    "length":1
+  }
+]
   },
   "you": {
     "id": "my-snake",
@@ -41,16 +42,16 @@
     "health": 100,
     "body": [
       {
-        "x": 5,
+        "x": 10,
         "y": 5
       },
       {
-        "x": 5,
-        "y": 6
+        "x": 9,
+        "y": 5
       }
     ],
     "head": {
-      "x": 5,
+      "x": 10,
       "y": 5
     },
     "length": 2

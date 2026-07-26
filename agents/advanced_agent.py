@@ -9,6 +9,7 @@ from utils.pathfinding import a_star_path, bfs_path
 
 class AdvancedAgent(BaseAgent):
     name = "advanced"
+    apiversion = "1"
     color = "#00ff00"
     author = "Skadoosh"
 

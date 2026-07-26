@@ -14,6 +14,7 @@ MOVE_DELTAS: dict[str, tuple[int, int]] = {
 
 class BaseAgent(ABC):
     name: str = "base-agent"
+    apiversion: str = "1"
     color: str = "#00ff00"
     author: str = "Skadoosh"
 

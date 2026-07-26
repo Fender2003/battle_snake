@@ -7,6 +7,7 @@ from agent import BaseAgent, legal_moves, next_position, parse_point
 
 class GreedyFoodAgent(BaseAgent):
     name = "greedy"
+    apiversion = "1"
     color = "#ffaa00"
     author = "GreedyFoodBot"
 
