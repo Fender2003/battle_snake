@@ -15,7 +15,7 @@ MOVE_DELTAS: dict[str, tuple[int, int]] = {
 class BaseAgent(ABC):
     name: str = "base-agent"
     color: str = "#00ff00"
-    author: str = "MySnake"
+    author: str = "Skadoosh"
 
     def start(self, game_state: dict[str, Any], you: dict[str, Any]) -> None:
         _ = game_state, you
