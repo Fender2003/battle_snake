@@ -22,11 +22,12 @@ def run_self_play(games: int, max_turns: int, output: Path, log_dir: Path) -> No
 
     for game_index in range(games):
         engine = BattlesnakeBlackoutEngine(max_turns=max_turns, seed=game_index)
-        agents = {
-    my_id: AdvancedAgent(),
-"advanced-1": AdvancedAgent(),
-"advanced-2": GreedyFoodAgent(),
-"advanced-3": GreedyFoodAgent(),}
+        agents: dict[str, BaseAgent] = {
+            my_id: AdvancedAgent(),
+            "advanced-1": AdvancedAgent(),
+            "advanced-2": AdvancedAgent(),
+            "advanced-3": AdvancedAgent(),
+        }
         engine.initialize_four_snakes([(snake_id, snake_id) for snake_id in agents])
 
         while not engine.is_game_over():
