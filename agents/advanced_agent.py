@@ -10,7 +10,7 @@ from utils.pathfinding import a_star_path, bfs_path
 class AdvancedAgent(BaseAgent):
     name = "advanced"
     color = "#00ff00"
-    author = "MySnake"
+    author = "Skadoosh"
 
     def move(self, game_state: dict[str, Any], you: dict[str, Any]) -> str:
         legal = legal_moves(game_state, you)

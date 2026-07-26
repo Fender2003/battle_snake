@@ -15,7 +15,7 @@
     "snakes": [
       {
         "id": "my-snake",
-        "name": "MySnake",
+        "name": "Skadoosh",
         "health": 100,
         "body": [
           {
@@ -37,7 +37,7 @@
   },
   "you": {
     "id": "my-snake",
-    "name": "MySnake",
+    "name": "Skadoosh",
     "health": 100,
     "body": [
       {
