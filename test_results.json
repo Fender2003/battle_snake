@@ -1,0 +1,37 @@
+{
+  "vs_minimax": {
+    "games": 250,
+    "wins": 186,
+    "win_rate": 0.744,
+    "avg_survival": 137.24,
+    "avg_rank": 1.456
+  },
+  "vs_aggressive": {
+    "games": 250,
+    "wins": 174,
+    "win_rate": 0.696,
+    "avg_survival": 102.704,
+    "avg_rank": 1.388
+  },
+  "vs_defensive": {
+    "games": 250,
+    "wins": 229,
+    "win_rate": 0.916,
+    "avg_survival": 88.78,
+    "avg_rank": 1.084
+  },
+  "vs_greedy": {
+    "games": 250,
+    "wins": 97,
+    "win_rate": 0.388,
+    "avg_survival": 85.892,
+    "avg_rank": 1.844
+  },
+  "vs_mixed": {
+    "games": 250,
+    "wins": 171,
+    "win_rate": 0.684,
+    "avg_survival": 115.512,
+    "avg_rank": 1.516
+  }
+}

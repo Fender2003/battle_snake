@@ -595,7 +595,7 @@ class AdvancedAgent(BaseAgent):
     # Evaluation weights
     W_SPACE = 100.0
     W_OPP_SPACE = -80.0
-    W_H2H_WIN = 600.0
+    W_H2H_WIN = 800.0
     W_H2H_LOSE = -1000.0
     W_MOMENTUM = 15.0
     W_CENTER = 3.0
@@ -606,8 +606,8 @@ class AdvancedAgent(BaseAgent):
     W_DEAD = -100000.0
     W_WIN = 100000.0
 
-    HUNGRY_THRESHOLD = 55
-    STARVING_THRESHOLD = 25
+    HUNGRY_THRESHOLD = 65
+    STARVING_THRESHOLD = 35
 
     # Transposition table flags
     TT_EXACT = 0
@@ -909,12 +909,12 @@ class AdvancedAgent(BaseAgent):
         return [m for _, m in scored]
 
     def _hash_state(self, heads, bodies, lens, hps, foods, depth, turn):
-        """Create hashable state for transposition table."""
         h = tuple(heads)
+        # Hash bodies as frozen sets of tuples for speed
+        b = tuple(tuple(body) for body in bodies)
         l = tuple(lens)
-        f = foods
-        return (h, l, f, depth, turn)
-
+        return (h, b, l, depth, turn)
+    
     def _safe_moves(self, head, body, my_len, opps, W, H) -> list[str]:
         """Legal moves with full H2H filtering."""
         blocked: set[tuple[int, int]] = set()
@@ -1171,8 +1171,14 @@ class AdvancedAgent(BaseAgent):
                     score += self.W_H2H_WIN
                 else:
                     score += self.W_H2H_LOSE
-            elif dist == 2 and lens[i] >= your_len:
-                score -= 40.0
+            elif dist <= 4 and lens[i] >= your_len:
+                # Flee from longer/equal snakes - penalty scales with proximity
+                flee_penalty = 80.0 * (5 - dist) / 4  # 80 at dist=1, 20 at dist=4
+                score -= flee_penalty
+            elif dist <= 3 and your_len > lens[i]:
+                # Chase shorter snakes - bonus scales with proximity
+                chase_bonus = 40.0 * (4 - dist) / 3  # 40 at dist=1, 13 at dist=3
+                score += chase_bonus
 
         if opp_count > 0:
             avg_opp_len = opp_len_sum / opp_count
@@ -1180,17 +1186,25 @@ class AdvancedAgent(BaseAgent):
 
         score += self.W_HEALTH * (your_hp - 50)
 
+        # Replace the food section in _evaluate with:
         if foods:
+            nearest = min(abs(heads[0][0] - f[0]) + abs(heads[0][1] - f[1])
+                        for f in foods)
+            
+            # Base food weight (always active, small)
+            base_food_w = 2.0
+            
+            # Urgency multiplier
             if your_hp <= self.STARVING_THRESHOLD:
-                w = self.W_FOOD_STARVING
+                urgency = 4.0
             elif your_hp <= self.HUNGRY_THRESHOLD:
-                w = self.W_FOOD_HUNGRY
+                urgency = 2.5
+            elif your_len <= 3:
+                urgency = 2.0  # Early game: grow fast
             else:
-                w = 0.0
-            if w > 0:
-                nearest = min(abs(heads[0][0] - f[0]) + abs(heads[0][1] - f[1])
-                              for f in foods)
-                score -= w * nearest
+                urgency = 1.0
+            
+            score -= base_food_w * urgency * nearest
 
         if current_dir and last_move == current_dir:
             score += self.W_MOMENTUM
