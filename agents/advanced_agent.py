@@ -10,17 +10,14 @@ from agent import BaseAgent, legal_moves, next_position, parse_point
 
 class AdvancedAgent(BaseAgent):
     """
-    Minimax Battlesnake with CORRECT head-to-head handling.
-
-    H2H rules (Battlesnake official):
-      - Two heads land on same cell → shorter snake dies.
-      - Equal length → BOTH snakes die.
-      - So equal-length H2H is ALWAYS bad for you.
-
-    This agent:
-      1. Filters out moves that would lose/tie H2H at the current turn.
-      2. Simulates opponents correctly (they avoid H2H with each other AND you).
-      3. Evaluates H2H threats at every depth of the tree.
+    Optimized minimax for 11x11, 4 snakes, <500ms.
+    
+    Fixes:
+    - H2H checked at every depth (not just distance-1)
+    - Momentum term prevents zigzagging
+    - Fast floodfill with early termination
+    - Smart opponent model (not just greedy space)
+    - Iterative deepening with hard 400ms cutoff
     """
 
     name = "advanced"
@@ -28,16 +25,18 @@ class AdvancedAgent(BaseAgent):
     color = "#8b00ff"
     author = "Skadoosh"
 
-    TIME_LIMIT = 0.35
+    TIME_LIMIT = 0.40  # 400ms hard cutoff for 500ms limit
 
-    W_SPACE = 120.0
-    W_OPP_SPACE = -90.0
-    W_H2H_WIN = 500.0
-    W_H2H_LOSE = -800.0  # equal-length H2H is also a loss
-    W_HEALTH = 0.6
-    W_LENGTH = 8.0
-    W_FOOD_HUNGRY = 3.5
-    W_FOOD_STARVING = 8.0
+    # Evaluation weights
+    W_SPACE = 100.0
+    W_OPP_SPACE = -80.0
+    W_H2H_WIN = 600.0
+    W_H2H_LOSE = -1000.0
+    W_MOMENTUM = 15.0  # prevents zigzagging
+    W_HEALTH = 0.5
+    W_LENGTH = 6.0
+    W_FOOD_HUNGRY = 3.0
+    W_FOOD_STARVING = 7.0
     W_DEAD = -100000.0
     W_WIN = 100000.0
 
@@ -69,6 +68,7 @@ class AdvancedAgent(BaseAgent):
         your_head = your_body[0]
         your_len = len(your_body)
         your_hp = int(you.get("health", 100))
+        current_dir = self._get_heading(you)
 
         opps: list[dict] = []
         for s in board.get("snakes", []):
@@ -83,7 +83,6 @@ class AdvancedAgent(BaseAgent):
                     "hp": int(s.get("health", 100)),
                 })
 
-        # Your safe moves (with full H2H filtering)
         your_moves = self._safe_moves(your_head, your_body, your_len, opps, W, H)
         if not your_moves:
             lm = legal_moves(game_state, you)
@@ -94,7 +93,8 @@ class AdvancedAgent(BaseAgent):
         best_move = your_moves[0]
         best_score = -1e18
 
-        for depth in (1, 2, 3):
+        # Iterative deepening
+        for depth in (1, 2):
             if time.time() - start > self.TIME_LIMIT:
                 break
 
@@ -111,7 +111,8 @@ class AdvancedAgent(BaseAgent):
                 if heads[0] is None:
                     continue
 
-                score = self._min_min(heads, bodies, lens, hps, foods, W, H, depth - 1, start)
+                score = self._min_min(heads, bodies, lens, hps, foods, W, H, 
+                                      depth - 1, start, m, current_dir)
                 if score > cur_best_score:
                     cur_best_score = score
                     cur_best = m
@@ -125,16 +126,15 @@ class AdvancedAgent(BaseAgent):
         return best_move
 
     def _min_min(self, heads, bodies, lens, hps, foods, W, H,
-                 depth: int, start: float) -> float:
+                 depth: int, start: float, last_move: str, current_dir: Optional[str]) -> float:
         if time.time() - start > self.TIME_LIMIT or depth <= 0:
-            return self._evaluate(heads, bodies, lens, hps, foods, W, H)
+            return self._evaluate(heads, bodies, lens, hps, foods, W, H, last_move, current_dir)
 
         opp_move_lists: list[list[str]] = []
         opp_indices: list[int] = []
         for i in range(1, len(heads)):
             if heads[i] is None:
                 continue
-            # Build list of ALL other snakes (including you and other opponents)
             others = []
             for j in range(len(heads)):
                 if j == i or heads[j] is None:
@@ -160,7 +160,7 @@ class AdvancedAgent(BaseAgent):
                 heads, bodies, lens, hps, opp_indices, combo, W, H
             )
             score = self._max_you(new_heads, new_bodies, new_lens, new_hps,
-                                  foods, W, H, depth - 1, start)
+                                  foods, W, H, depth - 1, start, last_move, current_dir)
             if score < min_score:
                 min_score = score
                 if min_score <= self.W_DEAD:
@@ -169,9 +169,9 @@ class AdvancedAgent(BaseAgent):
         return min_score
 
     def _max_you(self, heads, bodies, lens, hps, foods, W, H,
-                 depth: int, start: float) -> float:
+                 depth: int, start: float, last_move: str, current_dir: Optional[str]) -> float:
         if time.time() - start > self.TIME_LIMIT or depth <= 0:
-            return self._evaluate(heads, bodies, lens, hps, foods, W, H)
+            return self._evaluate(heads, bodies, lens, hps, foods, W, H, last_move, current_dir)
 
         if heads[0] is None:
             return self.W_DEAD
@@ -197,21 +197,14 @@ class AdvancedAgent(BaseAgent):
                 heads[0], bodies[0], lens[0], hps[0], m, opps, W, H
             )
             score = self._min_min(new_heads, new_bodies, new_lens, new_hps,
-                                  foods, W, H, depth - 1, start)
+                                  foods, W, H, depth - 1, start, m, current_dir)
             if score > max_score:
                 max_score = score
 
         return max_score
 
     def _safe_moves(self, head, body, my_len, opps, W, H) -> list[str]:
-        """
-        Legal moves that don't immediately kill me.
-        
-        H2H handling:
-          - If opponent's head is adjacent to my proposed cell AND I'm <= their length → death
-          - If opponent's head is ON my proposed cell → body collision (already caught)
-          - Equal-length H2H → both die → treat as loss
-        """
+        """Legal moves with full H2H filtering."""
         blocked: set[tuple[int, int]] = set()
 
         for opp in opps:
@@ -235,13 +228,11 @@ class AdvancedAgent(BaseAgent):
             if p in blocked:
                 continue
 
-            # H2H check: would any opponent move into this cell?
+            # H2H: if opponent is adjacent and I'm <= their length, I die
             dead = False
             for opp in opps:
                 oh = opp["head"]
-                # Check if opponent's head is adjacent to my proposed position
                 if abs(oh[0] - p[0]) + abs(oh[1] - p[1]) == 1:
-                    # Opponent could move here. If I'm <= their length, I die.
                     if my_len <= opp["len"]:
                         dead = True
                         break
@@ -253,14 +244,11 @@ class AdvancedAgent(BaseAgent):
 
     def _simulate_all(self, your_head, your_body, your_len, your_hp,
                       your_move, opps, W, H):
-        """Simulate one full turn: you + all opponents move simultaneously."""
-        # Your proposed new head
+        """Simulate full turn with smart opponent model."""
         your_new_head = next_position(your_head, your_move)
 
-        # Opponents' proposed new heads (greedy: maximize their space)
         opp_new_heads = []
         for opp in opps:
-            # Build list of all OTHER snakes (including you)
             others = [{"body": your_body, "head": your_head, "len": your_len, "hp": your_hp}]
             for other_opp in opps:
                 if other_opp is not opp:
@@ -271,17 +259,10 @@ class AdvancedAgent(BaseAgent):
                 opp_new_heads.append(None)
                 continue
             
-            best_m = opp_moves[0]
-            best_space = -1
-            for om in opp_moves:
-                nh = next_position(opp["head"], om)
-                sp = self._quick_space(nh, opp["body"], W, H)
-                if sp > best_space:
-                    best_space = sp
-                    best_m = om
+            # Smart opponent: avoid you if you're longer, chase food if hungry
+            best_m = self._pick_opp_move(opp, opp_moves, your_head, your_len, W, H)
             opp_new_heads.append(next_position(opp["head"], best_m))
 
-        # Resolve collisions
         proposed = [your_new_head] + opp_new_heads
         all_bodies = [your_body] + [o["body"] for o in opps]
         all_lens = [your_len] + [o["len"] for o in opps]
@@ -289,7 +270,6 @@ class AdvancedAgent(BaseAgent):
 
         alive = [True] * len(proposed)
 
-        # Head-to-wall / head-to-body kills
         for i, nh in enumerate(proposed):
             if nh is None:
                 alive[i] = False
@@ -306,7 +286,6 @@ class AdvancedAgent(BaseAgent):
                     alive[i] = False
                     break
 
-        # Head-to-head: if two alive snakes land on same cell
         for i in range(len(proposed)):
             if not alive[i] or proposed[i] is None:
                 continue
@@ -314,17 +293,14 @@ class AdvancedAgent(BaseAgent):
                 if not alive[j] or proposed[j] is None:
                     continue
                 if proposed[i] == proposed[j]:
-                    # H2H collision
                     if all_lens[i] > all_lens[j]:
                         alive[j] = False
                     elif all_lens[j] > all_lens[i]:
                         alive[i] = False
                     else:
-                        # Equal length → both die
                         alive[i] = False
                         alive[j] = False
 
-        # Build result
         heads: list[Optional[tuple[int, int]]] = [None] * len(proposed)
         bodies: list[list] = [[] for _ in range(len(proposed))]
         lens = [0] * len(proposed)
@@ -344,9 +320,37 @@ class AdvancedAgent(BaseAgent):
 
         return heads, bodies, lens, hps
 
+    def _pick_opp_move(self, opp, opp_moves, your_head, your_len, W, H):
+        """Smart opponent model: flee if you're longer, else maximize space."""
+        opp_head = opp["head"]
+        opp_len = opp["len"]
+        
+        # If you're longer, opponent should flee
+        if your_len > opp_len:
+            best_m = opp_moves[0]
+            best_dist = -1
+            for om in opp_moves:
+                nh = next_position(opp_head, om)
+                dist = abs(nh[0] - your_head[0]) + abs(nh[1] - your_head[1])
+                if dist > best_dist:
+                    best_dist = dist
+                    best_m = om
+            return best_m
+        
+        # Otherwise maximize space
+        best_m = opp_moves[0]
+        best_space = -1
+        for om in opp_moves:
+            nh = next_position(opp_head, om)
+            sp = self._quick_space(nh, opp["body"], W, H)
+            if sp > best_space:
+                best_space = sp
+                best_m = om
+        return best_m
+
     def _simulate_opps(self, heads, bodies, lens, hps, opp_indices, opp_moves,
                        W, H):
-        """Apply a specific combination of opponent moves (you stay put)."""
+        """Apply opponent moves."""
         new_heads = list(heads)
         new_bodies = [list(b) for b in bodies]
         new_lens = list(lens)
@@ -362,14 +366,12 @@ class AdvancedAgent(BaseAgent):
                 alive[idx] = False
                 continue
             
-            # Hit your body?
             if heads[0] is not None:
                 your_body_check = bodies[0][:-1] if len(bodies[0]) > 1 else bodies[0]
                 if nh in your_body_check:
                     alive[idx] = False
                     continue
             
-            # Hit another opponent's body?
             for j in opp_indices:
                 if j == idx or not alive.get(j, False):
                     continue
@@ -378,13 +380,11 @@ class AdvancedAgent(BaseAgent):
                     alive[idx] = False
                     break
 
-        # H2H with YOU
         if heads[0] is not None:
             for idx in opp_indices:
                 if not alive[idx]:
                     continue
                 if proposed[idx] == heads[0]:
-                    # H2H with you
                     if lens[0] > lens[idx]:
                         alive[idx] = False
                     elif lens[idx] > lens[0]:
@@ -393,14 +393,12 @@ class AdvancedAgent(BaseAgent):
                         new_lens[0] = 0
                         new_hps[0] = 0
                     else:
-                        # Equal length → both die
                         alive[idx] = False
                         new_heads[0] = None
                         new_bodies[0] = []
                         new_lens[0] = 0
                         new_hps[0] = 0
 
-        # Opponent-vs-opponent H2H
         for i_idx in opp_indices:
             if not alive[i_idx]:
                 continue
@@ -429,7 +427,9 @@ class AdvancedAgent(BaseAgent):
 
         return new_heads, new_bodies, new_lens, new_hps
 
-    def _evaluate(self, heads, bodies, lens, hps, foods, W, H) -> float:
+    def _evaluate(self, heads, bodies, lens, hps, foods, W, H, 
+                  last_move: str, current_dir: Optional[str]) -> float:
+        """Evaluation with momentum to prevent zigzagging."""
         if heads[0] is None:
             return self.W_DEAD
 
@@ -457,18 +457,14 @@ class AdvancedAgent(BaseAgent):
             opp_space = self._floodfill(heads[i], bodies, W, H)
             score += self.W_OPP_SPACE * (opp_space / total_cells)
 
-            # H2H opportunity/threat
             dist = abs(heads[0][0] - heads[i][0]) + abs(heads[0][1] - heads[i][1])
             if dist == 1:
-                # Adjacent → immediate H2H possible
                 if your_len > lens[i]:
                     score += self.W_H2H_WIN
                 else:
-                    # Shorter or equal → bad
                     score += self.W_H2H_LOSE
             elif dist == 2 and lens[i] >= your_len:
-                # Two cells away and they're longer → threat
-                score -= 50.0
+                score -= 40.0
 
         if opp_count > 0:
             avg_opp_len = opp_len_sum / opp_count
@@ -488,9 +484,14 @@ class AdvancedAgent(BaseAgent):
                               for f in foods)
                 score -= w * nearest
 
+        # Momentum: bonus for continuing in same direction
+        if current_dir and last_move == current_dir:
+            score += self.W_MOMENTUM
+
         return score
 
     def _floodfill(self, start, bodies, W, H) -> int:
+        """Fast floodfill with early termination."""
         if start is None:
             return 0
         blocked: set[tuple[int, int]] = set()
@@ -507,7 +508,7 @@ class AdvancedAgent(BaseAgent):
         visited = {start}
         q = deque([start])
         count = 0
-        limit = (W * H) // 2 + 1
+        limit = 60  # 50% of 11x11 = 60, no need to count more
 
         while q and count < limit:
             x, y = q.popleft()
@@ -522,6 +523,7 @@ class AdvancedAgent(BaseAgent):
         return count
 
     def _quick_space(self, head, body, W, H) -> int:
+        """Very fast approximate space for opponent decisions."""
         blocked: set[tuple[int, int]] = set()
         if len(body) > 1:
             blocked.update(body[:-1])
@@ -532,7 +534,7 @@ class AdvancedAgent(BaseAgent):
         visited = {head}
         q = deque([head])
         count = 0
-        limit = 20
+        limit = 15
         while q and count < limit:
             x, y = q.popleft()
             count += 1
@@ -544,3 +546,16 @@ class AdvancedAgent(BaseAgent):
                         visited.add(n)
                         q.append(n)
         return count
+
+    def _get_heading(self, you: dict[str, Any]) -> Optional[str]:
+        body = you.get("body", [])
+        if len(body) < 2:
+            return None
+        head = parse_point(body[0])
+        neck = parse_point(body[1])
+        dx, dy = head[0] - neck[0], head[1] - neck[1]
+        if dx == 0 and dy == 1: return "up"
+        if dx == 0 and dy == -1: return "down"
+        if dx == 1 and dy == 0: return "right"
+        if dx == -1 and dy == 0: return "left"
+        return None
