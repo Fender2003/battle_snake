@@ -597,7 +597,7 @@ class AdvancedAgent(BaseAgent):
     W_OPP_SPACE = -80.0
     W_H2H_WIN = 800.0
     W_H2H_LOSE = -1000.0
-    W_MOMENTUM = 15.0
+    W_MOMENTUM = 25.0
     W_CENTER = 3.0
     W_HEALTH = 0.5
     W_LENGTH = 6.0
@@ -926,10 +926,13 @@ class AdvancedAgent(BaseAgent):
             else:
                 blocked.update(b)
 
-        if len(body) > 1:
+        # FIX: Check if we're about to eat (head adjacent to food)
+        # If so, tail won't move, so we can't exclude it
+        # We don't have food info here, so be conservative: only exclude tail if body > 2
+        if len(body) > 2:
             blocked.update(body[:-1])
         else:
-            blocked.update(body)
+            blocked.update(body)  # block entire body for short snakes
 
         out: list[str] = []
         for m in ("up", "down", "left", "right"):
