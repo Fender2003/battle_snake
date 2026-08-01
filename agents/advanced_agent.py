@@ -8,7 +8,7 @@ from typing import Any, Optional
 from agent import BaseAgent, legal_moves, next_position, parse_point
 
 
-class SOTAAdvancedAgent(BaseAgent):
+class AdvancedAgent(BaseAgent):
     """
     SOTA Heuristic Minimax for Battlesnake.
     Features: Relative Space Dominance, Dynamic Herding, Trap Avoidance.
