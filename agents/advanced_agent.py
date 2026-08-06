@@ -22,7 +22,7 @@ class AdvancedAgent(BaseAgent):
     TIME_LIMIT = 0.42  # Hard cutoff for 500ms limit
 
     # Evaluation Weights
-    W_SPACE_DOMINANCE = 15.0   # The most important SOTA weight
+    W_SPACE_DOMINANCE = 30.0   # The most important SOTA weight
     W_HERDING = 8.0            # Shrinking opponent space
     W_FLEEING = 100.0          # Escaping longer snakes
     W_TRAP_PENALTY = -900000.0 # Instant death if trapped
